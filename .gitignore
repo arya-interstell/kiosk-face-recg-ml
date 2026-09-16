@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Biometric data: 128-number face templates and their visit history. Never
+# commit this, and see the README before copying it anywhere.
+identities.json
+identities.json.lock
+*.tmp
+
+# 37 MB of ONNX from the OpenCV model zoo, fetched at deploy time instead.
+# Run: sh models/fetch.sh
+models/*.onnx

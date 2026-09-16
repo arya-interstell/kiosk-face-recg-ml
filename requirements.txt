@@ -1,0 +1,5 @@
+# Deliberately three dependencies. The face detector is an 85KB-class ONNX
+# model that ships inside OpenCV's DNN module, so there is no torch here.
+opencv-python>=4.10
+numpy>=1.26
+websockets>=12.0

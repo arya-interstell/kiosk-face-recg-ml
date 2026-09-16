@@ -1,0 +1,9 @@
+{
+  "focal_length_px": 1286.75,
+  "calibration_distance_cm": 100.0,
+  "mean_ipd_px": 78.93,
+  "ipd_mm": 63.0,
+  "frame_width": 640,
+  "frame_height": 480,
+  "captured_at": "2026-09-04T23:12:08"
+}

@@ -1,5 +1,10 @@
 # Deliberately three dependencies. The face detector is an 85KB-class ONNX
 # model that ships inside OpenCV's DNN module, so there is no torch here.
-opencv-python>=4.10
+#
+# headless, not plain opencv-python: nothing here opens a window any more, and
+# the GUI build needs libGL and libglib on the host. On a bare server image
+# that is an ImportError at startup, not a missing feature. FaceDetectorYN and
+# FaceRecognizerSF live in objdetect, which headless ships in full.
+opencv-python-headless>=4.10
 numpy>=1.26
 websockets>=12.0

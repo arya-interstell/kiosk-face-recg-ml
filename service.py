@@ -246,6 +246,11 @@ class Session:
         self._focal_width = None
 
         self._present = False           # last raw presence, for edge detection
+        # Who is currently at the kiosk, and which visit this is. Identity
+        # resolves once, on the frame engagement fires, but a client tracking a
+        # session needs it on every message after that - not just the one.
+        self._identity = None
+        self._visit_id = None
         self._now = None                # client-clock mode only
         self._prev_client_ts = None
         self._last_frame_at = None
@@ -537,6 +542,12 @@ class Session:
         if result.identity is not None:
             events.append("person_recognized")
 
+        # A visit is one person's stay at the kiosk. Minted when the dwell timer
+        # starts rather than when they are identified, so events that arrive
+        # before recognition can still be grouped with the ones after it.
+        if "candidate_detected" in events:
+            self._visit_id = uuid.uuid4().hex[:12]
+
         for kind in events:
             self._send(result, frame, kind, stalled, droppable=False)
 
@@ -544,6 +555,12 @@ class Session:
         if config.STATE_BROADCAST_HZ and now >= self._next_state_at:
             self._send(result, frame, "state", stalled, droppable=True)
             self._next_state_at = now + (1.0 / config.STATE_BROADCAST_HZ)
+
+        # Cleared only after the events above have been sent, so `disengaged`
+        # still names who it was that left.
+        if "candidate_lost" in events or "disengaged" in events:
+            self._identity = None
+            self._visit_id = None
 
         if frame is not None:
             self._frames += 1
@@ -556,6 +573,20 @@ class Session:
 
     def _send(self, result, frame, kind, stalled, droppable):
         payload = result_to_payload(result, kind=kind)
+
+        # Identity resolves on exactly one frame, but it describes the whole
+        # visit. Remember it there and carry it on every later message, so a
+        # client never has to correlate a `state` or `disengaged` back to the
+        # `engaged` that named the person.
+        if payload["identity"] is not None:
+            self._identity = payload["identity"]
+        elif self._identity is not None:
+            payload["identity"] = self._identity
+
+        # Top-level and always present, so a client can read one field without
+        # walking into a block that is null for the first two seconds.
+        payload["person_id"] = self._identity["id"] if self._identity else None
+        payload["visit_id"] = self._visit_id
         payload["stream"] = self.stream
         payload["session"] = self.id
         payload["frame"] = {

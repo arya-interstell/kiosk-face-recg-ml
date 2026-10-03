@@ -56,6 +56,22 @@ python client_example.py --subscribe kiosk-3   # listen only, send nothing
 `client_example.py` is the whole client contract in one readable file. Read it
 before writing your own.
 
+### Testing with still images
+
+No camera needed, and useful for checking a photograph against the gates before
+blaming the service:
+
+```sh
+python send_images.py face.jpg --inspect        # what the gates think, sends nothing
+python send_images.py face.jpg --token "$KIOSK_AUTH_TOKEN"
+```
+
+A single picture can never produce `engaged` - the dwell timer needs
+`ENGAGE_DWELL_SECONDS` of *continuously* qualifying frames and one message is
+instantaneous. So `send_images.py` re-sends each image at a steady rate for
+`--hold` seconds, which is what a real camera would deliver if the person stood
+still.
+
 ## The protocol
 
 One duplex socket. **Binary messages in, text messages out.** Text messages
@@ -127,6 +143,7 @@ Every message carries the whole state block, so a simple client can ignore
 ```json
 {
   "type": "engaged", "state": "engaged", "engaged": true,
+  "person_id": "c1007bf7-...", "visit_id": "e5288113a0a8",
   "stream": "kiosk-3", "session": "aef0f36d",
   "dwell_seconds": 2.01, "progress": 1.0, "calibrated": true,
   "face": {"present": true, "distance_cm": 70.0, "yaw_deg": 0.0,
@@ -150,6 +167,27 @@ on site. `person_recognized` carries the same block with `identity` filled in:
 
 `identity` is absent when the visit never yielded enough clean frames, which is
 a normal outcome — greet them generically.
+
+### Identity lasts the whole visit, not one message
+
+Recognition resolves on exactly one frame — the one engagement fires on — but it
+describes the person, not that frame. So once it resolves, every later message
+in the visit carries it too:
+
+| field | present | meaning |
+|---|---|---|
+| `person_id` | always, `null` until known | the identified person, flat and null-safe |
+| `visit_id` | from `candidate_detected` | this stay at the kiosk, minted when the dwell starts |
+| `identity` | from `engaged` onwards | the full block: returning, visit count, history, scores |
+
+Both clear when the visitor leaves — but not before `disengaged` is sent, so
+that event still names who it was that left. `visit_id` is minted when the dwell
+timer starts rather than at identification, so the events that arrive *before*
+recognition can still be grouped with the ones after it.
+
+Without this a client has to catch the single `engaged` message and correlate
+every later event back to it by hand, which is the kind of bookkeeping that
+works until a reconnect.
 
 ### Control messages in
 

@@ -80,6 +80,10 @@ async def read_events(ws, seen):
             if kind == "state":
                 continue
             seen.append(kind)
+            ids = ""
+            if msg.get("person_id") or msg.get("visit_id"):
+                ids = (f"  person={str(msg.get('person_id'))[:8]}"
+                       f" visit={msg.get('visit_id')}")
             if kind == "ready":
                 print(f"connected  stream={msg['stream']}  calibrated={msg['calibrated']}")
             elif kind == "error":
@@ -88,12 +92,12 @@ async def read_events(ws, seen):
                 who = msg["identity"]
                 label = "RETURNING" if who["returning"] else "new visitor"
                 print(f"  {kind:<20} {label}  {who['id'][:8]}  "
-                      f"visit #{who['visit_count']}  sim={who['similarity']:.3f}")
+                      f"visit #{who['visit_count']}  sim={who['similarity']:.3f}{ids}")
             else:
                 face = msg["face"]
                 why = ",".join(face["rejected_for"]) or "-"
                 print(f"  {kind:<20} dist={face['distance_cm']}  "
-                      f"yaw={face['yaw_deg']}  rejected_for={why}")
+                      f"yaw={face['yaw_deg']}  rejected_for={why}{ids}")
     except websockets.ConnectionClosed:
         pass
 

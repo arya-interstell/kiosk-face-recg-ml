@@ -143,7 +143,8 @@ Every message carries the whole state block, so a simple client can ignore
 ```json
 {
   "type": "engaged", "state": "engaged", "engaged": true,
-  "person_id": "c1007bf7-...", "visit_id": "e5288113a0a8",
+  "person_id": "c1007bf7-...", "person_status": "final", "person_similarity": null,
+  "visit_id": "e5288113a0a8",
   "stream": "kiosk-3", "session": "aef0f36d",
   "dwell_seconds": 2.01, "progress": 1.0, "calibrated": true,
   "face": {"present": true, "distance_cm": 70.0, "yaw_deg": 0.0,
@@ -166,7 +167,8 @@ on site. `person_recognized` carries the same block with `identity` filled in:
 ```
 
 `identity` is absent when the visit never yielded enough clean frames, which is
-a normal outcome — greet them generically.
+a normal outcome — greet them generically. The service log says so on the
+`engaged` line, with how many usable frames it got.
 
 ### Identity lasts the whole visit, not one message
 
@@ -176,7 +178,9 @@ in the visit carries it too:
 
 | field | present | meaning |
 |---|---|---|
-| `person_id` | always, `null` until known | the identified person, flat and null-safe |
+| `person_id` | whenever a face is at the kiosk; `null` only when nobody is | who this is, see `person_status` |
+| `person_status` | with `person_id` | `new`, `closest` or `final`, below |
+| `person_similarity` | with `closest` | how near the guess is, cosine in [-1, 1] |
 | `visit_id` | from `candidate_detected` | this stay at the kiosk, minted when the dwell starts |
 | `identity` | from `engaged` onwards | the full block: returning, visit count, history, scores |
 
@@ -184,6 +188,22 @@ Both clear when the visitor leaves — but not before `disengaged` is sent, so
 that event still names who it was that left. `visit_id` is minted when the dwell
 timer starts rather than at identification, so the events that arrive *before*
 recognition can still be grouped with the ones after it.
+
+`person_id` never waits for engagement. It moves through three statuses:
+
+- **`new`**: a fresh id, minted the moment a face appears, before there is a
+  frame clean enough to compare or anyone stored to compare against.
+- **`closest`**: the nearest stored person to the best frame so far, with *no*
+  threshold. It is a guess: a first-time visitor will be shown whoever they
+  most resemble. Check `person_similarity` before trusting it.
+- **`final`**: decided when `engaged` fires, and fixed until they leave. A
+  returning person gets their stored id; a new person is stored under the id
+  minted for them in `new`. If recognition got too few clean frames, they keep
+  that minted id but nothing is stored.
+
+So the id can change before `engaged` and never after it. Group a visit's
+messages by `visit_id`, not `person_id`. Nobody is stored unless they engage:
+a passer-by gets an id in messages, and their face is forgotten when they leave.
 
 Without this a client has to catch the single `engaged` message and correlate
 every later event back to it by hand, which is the kind of bookkeeping that

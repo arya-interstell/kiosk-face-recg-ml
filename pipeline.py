@@ -7,6 +7,7 @@ interfering with each other.
 """
 
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from typing import List, Optional
 
@@ -29,6 +30,9 @@ class FrameResult:
     total_ms: float
     fps: float
     identity: object = None      # MatchResult, only on the frame engagement fires
+    person_id: Optional[str] = None      # set whenever someone is at the kiosk
+    person_status: Optional[str] = None  # "new", "closest" or "final"
+    person_similarity: Optional[float] = None  # for "closest": how near the guess is
     recognition_ms: float = 0.0
     focal_px: float = None       # the focal length this frame was measured with
 
@@ -50,6 +54,13 @@ class KioskPipeline:
         self._roll = EMA()
         self._fps = EMA(alpha=0.1)
         self._last_frame_ts = None
+        # Who is at the kiosk. A fresh id is minted the moment a face appears
+        # and stored if they turn out to be new; until engagement the nearest
+        # stored person is shown instead; engagement decides for good.
+        self._new_id = None
+        self._guess = None              # (identity_id, similarity) or None
+        self._final_id = None
+        self._last_face_at = None
 
     def process(self, frame, now: Optional[float] = None) -> FrameResult:
         """Advance one frame. The normal path."""
@@ -101,20 +112,48 @@ class KioskPipeline:
 
         events = self.tracker.update(m, now)
 
-        # Recognition rides along on the dwell: gather evidence while the timer
-        # counts down, spend it the instant engagement fires, and forget the
-        # visitor as soon as they leave.
+        if face is not None:
+            self._last_face_at = now
+            if self._new_id is None:
+                self._new_id = str(uuid.uuid4())
+
+        # Recognition rides along on the dwell: gather evidence from the first
+        # sighting, show the nearest stored person as a guess meanwhile, and
+        # spend the evidence the instant engagement fires.
         identity = None
         recognition_ms = 0.0
-        if self.visits is not None:
-            if face is not None and self.tracker.state in (State.CANDIDATE, State.ENGAGED):
-                self.visits.observe(frame, face, m)
-            if Event.ENGAGED in events:
+        if self.visits is not None and self._final_id is None and face is not None:
+            self.visits.observe(frame, face, m)
+            self._guess = self.visits.closest(now)
+        if Event.ENGAGED in events:
+            if self.visits is not None:
                 t_rec = time.perf_counter()
-                identity = self.visits.identify()
+                identity = self.visits.identify(new_id=self._new_id)
                 recognition_ms = (time.perf_counter() - t_rec) * 1000.0
-            if Event.DISENGAGED in events or Event.CANDIDATE_LOST in events:
-                self.visits.reset()
+            # Too few clean frames to identify is a normal outcome; they keep
+            # the id they were given, unstored, rather than someone's guess.
+            self._final_id = identity.identity_id if identity else self._new_id
+
+        if self._final_id is not None:
+            person_id, person_status, person_similarity = self._final_id, "final", None
+        elif self._guess is not None:
+            person_id, person_status = self._guess[0], "closest"
+            person_similarity = round(self._guess[1], 4)
+        elif self._new_id is not None:
+            person_id, person_status, person_similarity = self._new_id, "new", None
+        else:
+            person_id = person_status = person_similarity = None
+
+        # Forget them when the visit ends, or when the face has been gone long
+        # enough outside a visit that whoever appears next is someone new. A
+        # candidate_lost with the face still in view keeps its id: it is the
+        # same continuous person, who just stopped qualifying.
+        gone = (face is None and self.tracker.state in (State.IDLE, State.COOLDOWN)
+                and (self._last_face_at is None
+                     or now - self._last_face_at > config.CANDIDATE_GRACE_SECONDS))
+        if (Event.DISENGAGED in events or gone
+                or (Event.CANDIDATE_LOST in events and face is None)):
+            self._forget_person()
 
         # fps measures how fast frames arrive, so idle ticks must not count.
         if from_frame:
@@ -135,9 +174,19 @@ class KioskPipeline:
             total_ms=round((time.perf_counter() - t0) * 1000.0, 2),
             fps=round(self._fps.value or 0.0, 1),
             identity=identity,
+            person_id=person_id,
+            person_status=person_status,
+            person_similarity=person_similarity,
             recognition_ms=round(recognition_ms, 2),
             focal_px=self.focal_px,
         )
+
+    def _forget_person(self):
+        if self.visits is not None:
+            self.visits.reset()
+        self._new_id = None
+        self._guess = None
+        self._final_id = None
 
 
 def result_to_payload(result: FrameResult, kind: str = "state") -> dict:
@@ -167,6 +216,9 @@ def result_to_payload(result: FrameResult, kind: str = "state") -> dict:
             "fps": result.fps,
         },
         "calibrated": bool(result.focal_px),
+        "person_id": result.person_id,
+        "person_status": result.person_status,
+        "person_similarity": result.person_similarity,
         "identity": _identity_payload(result.identity),
     }
 

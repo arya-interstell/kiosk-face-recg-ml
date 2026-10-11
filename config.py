@@ -207,6 +207,11 @@ RECOGNITION_MAX_PITCH_DEG = 12.0
 RECOGNITION_MIN_FACE_PX = 80          # shorter bbox side, in pixels
 RECOGNITION_MIN_SHARPNESS = 25.0      # variance of Laplacian on the crop
 
+# Before engagement, person_id shows the nearest stored person to the best crop
+# so far - a guess with no threshold, replaced by the real identification when
+# engagement fires. Re-checked at most this often, and only on a better crop.
+PROVISIONAL_MATCH_INTERVAL_S = 0.5
+
 # --- Matching ---------------------------------------------------------------
 # Cosine similarity between 128-d embeddings, in [-1, 1].
 #

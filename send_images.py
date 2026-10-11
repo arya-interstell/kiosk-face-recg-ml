@@ -83,6 +83,7 @@ async def read_events(ws, seen):
             ids = ""
             if msg.get("person_id") or msg.get("visit_id"):
                 ids = (f"  person={str(msg.get('person_id'))[:8]}"
+                       f"({msg.get('person_status')})"
                        f" visit={msg.get('visit_id')}")
             if kind == "ready":
                 print(f"connected  stream={msg['stream']}  calibrated={msg['calibrated']}")

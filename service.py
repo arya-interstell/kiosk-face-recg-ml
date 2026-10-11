@@ -129,9 +129,13 @@ class SharedGallery:
     def path(self):
         return self._store.path
 
-    def identify_and_record(self, template, now=None):
+    def identify_and_record(self, template, now=None, new_id=None):
         with self._lock:
-            return self._store.identify_and_record(template, now=now)
+            return self._store.identify_and_record(template, now=now, new_id=new_id)
+
+    def closest(self, template):
+        with self._lock:
+            return self._store.closest(template)
 
     def purge(self, now=None):
         with self._lock:
@@ -583,9 +587,8 @@ class Session:
         elif self._identity is not None:
             payload["identity"] = self._identity
 
-        # Top-level and always present, so a client can read one field without
-        # walking into a block that is null for the first two seconds.
-        payload["person_id"] = self._identity["id"] if self._identity else None
+        # person_id comes from the pipeline: a guess until engagement, then the
+        # identification, and null only when nobody is at the kiosk.
         payload["visit_id"] = self._visit_id
         payload["stream"] = self.stream
         payload["session"] = self.id
@@ -608,6 +611,11 @@ class Session:
         m = result.measurement
         line = (f"[{self.stream}] {kind:<19} dwell={result.dwell_seconds:5.2f}s "
                 f"dist={_fmt(m.distance_cm)}cm yaw={_fmt(m.yaw_deg)}")
+        if result.person_id:
+            line += f" person={result.person_id[:8]} ({result.person_status})"
+        if kind == "engaged" and result.identity is None and self.pipeline.visits is not None:
+            line += (f"  - not identified: {self.pipeline.visits.sample_count} usable frames,"
+                     f" need {config.RECOGNITION_MIN_SAMPLES}; keeping the new id, unstored")
         if kind == "person_recognized":
             who = result.identity
             label = "RETURNING" if who.is_returning else "new visitor"

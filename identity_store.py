@@ -197,10 +197,26 @@ class IdentityStore:
 
         return self._ids[best], best_score, runner_up
 
+    def closest(self, template):
+        """Nearest stored person as (id, similarity), or None if nobody is stored.
+
+        Read-only and deliberately thresholdless: this is the provisional guess
+        shown before engagement, which the full identify at engagement replaces.
+        Re-reads the file first so other kiosks' enrolments are visible.
+        """
+        self.load()
+        best_id, best, _ = self.search(np.asarray(template, dtype=np.float32))
+        if best_id is None:
+            return None
+        return best_id, best
+
     # -- the main operation -----------------------------------------------
 
-    def identify_and_record(self, template, now=None) -> MatchResult:
+    def identify_and_record(self, template, now=None, new_id=None) -> MatchResult:
         """Match a visit template, then either append a timestamp or enrol.
+
+        `new_id` is the id to enrol under if this is a new person, so the id a
+        client was shown before engagement is the one that gets stored.
 
         The whole read-modify-write is inside the lock so two kiosks seeing the
         same person at the same moment cannot both create an identity for them.
@@ -227,7 +243,8 @@ class IdentityStore:
                 record = data["identities"][best_id]
                 result = self._append_visit(record, best_id, template, now, best, runner_up)
             else:
-                result = self._enrol(data, template, now, best, runner_up, ambiguous)
+                result = self._enrol(data, template, now, best, runner_up, ambiguous,
+                                     new_id)
 
             self._write_file(data)
             self._mtime = os.path.getmtime(self.path)
@@ -273,8 +290,10 @@ class IdentityStore:
             # Drop the oldest; recent views track the person's current look.
             record["templates"].pop(0)
 
-    def _enrol(self, data, template, now, best, runner_up, ambiguous):
-        identity_id = str(uuid.uuid4())
+    def _enrol(self, data, template, now, best, runner_up, ambiguous, new_id=None):
+        identity_id = new_id
+        if identity_id is None or identity_id in data["identities"]:
+            identity_id = str(uuid.uuid4())
         data["identities"][identity_id] = {
             "first_seen": _iso(now),
             "last_seen": _iso(now),
